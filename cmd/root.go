@@ -29,6 +29,7 @@ import (
 
 	"github.com/Minenetpro/pelican-wings/config"
 	"github.com/Minenetpro/pelican-wings/environment"
+	"github.com/Minenetpro/pelican-wings/internal/axiom"
 	"github.com/Minenetpro/pelican-wings/internal/cron"
 	"github.com/Minenetpro/pelican-wings/internal/database"
 	"github.com/Minenetpro/pelican-wings/loggers/cli"
@@ -301,6 +302,10 @@ func rootCmdRun(cmd *cobra.Command, _ []string) {
 			s.CtxCancel()
 		}
 	}()
+
+	if ing := axiom.NewIngestor(cmd.Context(), manager); ing != nil {
+		log.Info("axiom event ingestor initialized and running")
+	}
 
 	if s, err := cron.Scheduler(cmd.Context(), manager); err != nil {
 		log.WithField("error", err).Fatal("failed to initialize cron system")
