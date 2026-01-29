@@ -351,6 +351,16 @@ func (ing *Ingestor) flush(batch []AxiomEvent) {
 			return
 		}
 
+		// 429 Too Many Requests is retryable (rate limiting).
+		if resp.StatusCode == http.StatusTooManyRequests {
+			log.WithFields(log.Fields{
+				"status":  resp.StatusCode,
+				"attempt": attempt + 1,
+			}).Warn("axiom: rate limited, retrying")
+			continue
+		}
+
+		// Other 4xx errors are permanent (auth, bad request, etc).
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			log.WithFields(log.Fields{
 				"status":  resp.StatusCode,
@@ -359,6 +369,7 @@ func (ing *Ingestor) flush(batch []AxiomEvent) {
 			return
 		}
 
+		// 5xx errors are retryable.
 		log.WithFields(log.Fields{
 			"status":  resp.StatusCode,
 			"attempt": attempt + 1,

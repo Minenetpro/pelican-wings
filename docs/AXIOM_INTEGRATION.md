@@ -420,7 +420,8 @@ On shutdown (SIGTERM), all remaining events in the buffer are drained and flushe
 | HTTP Status | Behavior                                           |
 |-------------|----------------------------------------------------|
 | 2xx         | Success. Batch accepted.                           |
-| 4xx         | Permanent failure. Logged and dropped (no retry).  |
+| 429         | Rate limited. Retried up to 3 times with backoff.  |
+| 4xx (other) | Permanent failure. Logged and dropped (no retry).  |
 | 5xx         | Retried up to 3 times with backoff (0s, 1s, 2s).  |
 | Network err | Retried up to 3 times with backoff (0s, 1s, 2s).  |
 
