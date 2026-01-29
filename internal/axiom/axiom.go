@@ -41,8 +41,12 @@ type Ingestor struct {
 	client  *http.Client
 	eventCh chan AxiomEvent
 	manager *server.Manager
+	ctx     context.Context
 
-	dropWarnOnce sync.Once
+	// subscribedMu protects subscribedServers from concurrent access.
+	subscribedMu      sync.Mutex
+	subscribedServers map[string]struct{}
+
 	dropWarnMu   sync.Mutex
 	lastDropWarn time.Time
 }
@@ -65,16 +69,43 @@ func NewIngestor(ctx context.Context, manager *server.Manager) *Ingestor {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		eventCh: make(chan AxiomEvent, 10000),
-		manager: manager,
+		eventCh:           make(chan AxiomEvent, 10000),
+		manager:           manager,
+		ctx:               ctx,
+		subscribedServers: make(map[string]struct{}),
 	}
 
+	// Register the hook FIRST to ensure no servers are missed if one is added
+	// between All() and hook registration. The trySubscribe method ensures
+	// we never double-subscribe to the same server.
+	manager.OnServerAdd(func(s *server.Server) {
+		ing.trySubscribe(s)
+	})
+
+	// Subscribe to all existing servers.
 	for _, s := range manager.All() {
-		go ing.subscribeServer(ctx, s)
+		ing.trySubscribe(s)
 	}
+
 	go ing.flusher(ctx)
 
 	return ing
+}
+
+// trySubscribe attempts to subscribe to a server's events. It returns false
+// if the server is already subscribed (preventing duplicate subscriptions).
+func (ing *Ingestor) trySubscribe(s *server.Server) bool {
+	ing.subscribedMu.Lock()
+	if _, exists := ing.subscribedServers[s.ID()]; exists {
+		ing.subscribedMu.Unlock()
+		return false
+	}
+	ing.subscribedServers[s.ID()] = struct{}{}
+	ing.subscribedMu.Unlock()
+
+	log.WithField("server", s.ID()).Debug("axiom: subscribing to server")
+	go ing.subscribeServer(ing.ctx, s)
+	return true
 }
 
 // subscribeServer listens to a single server's Events bus and LogSink and
@@ -86,10 +117,20 @@ func (ing *Ingestor) subscribeServer(ctx context.Context, s *server.Server) {
 	s.Events().On(eventCh)
 	s.Sink(system.LogSink).On(logCh)
 
-	defer s.Events().Off(eventCh)
-	defer s.Sink(system.LogSink).Off(logCh)
-
 	serverID := s.ID()
+
+	defer func() {
+		s.Events().Off(eventCh)
+		s.Sink(system.LogSink).Off(logCh)
+
+		// Remove from subscribed set so we can re-subscribe if the server
+		// is recreated with the same ID.
+		ing.subscribedMu.Lock()
+		delete(ing.subscribedServers, serverID)
+		ing.subscribedMu.Unlock()
+
+		log.WithField("server", serverID).Debug("axiom: unsubscribed from server")
+	}()
 
 	for {
 		select {

@@ -439,9 +439,7 @@ The internal event channel is buffered at 10,000 events. If the channel fills (A
 
 ## Known Limitations
 
-1. **Startup-only subscription.** The ingestor subscribes to servers present when Wings boots. Servers added at runtime (via Panel "Create Server") are **not** subscribed until the next Wings restart. This is a v1 limitation.
-
-2. **Network counters are cumulative.** `network_rx_bytes` / `network_tx_bytes` reset to 0 when a container restarts. Dashboards that compute rates must handle counter resets (negative deltas should be discarded or zeroed).
+1. **Network counters are cumulative.** `network_rx_bytes` / `network_tx_bytes` reset to 0 when a container restarts. Dashboards that compute rates must handle counter resets (negative deltas should be discarded or zeroed).
 
 3. **Disk usage is cached.** `disk_bytes` is updated on a configurable interval (default every 150 seconds). It is not real-time. Spikes in disk I/O won't be reflected until the next check.
 
