@@ -4,7 +4,10 @@
       "Bash(grep:*)",
       "Bash(cat:*)",
       "Bash(go build:*)",
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "Bash(find:*)",
+      "WebSearch",
+      "WebFetch(domain:axiom.co)"
     ]
   }
 }

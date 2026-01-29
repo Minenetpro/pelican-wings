@@ -22,10 +22,14 @@ import (
 	"github.com/Minenetpro/pelican-wings/server/filesystem"
 )
 
+// ServerAddHook is a callback function invoked when a server is added to the manager.
+type ServerAddHook func(*Server)
+
 type Manager struct {
-	mu      sync.RWMutex
-	client  remote.Client
-	servers []*Server
+	mu       sync.RWMutex
+	client   remote.Client
+	servers  []*Server
+	addHooks []ServerAddHook
 }
 
 // NewManager returns a new server manager instance. This will boot up all the
@@ -85,10 +89,25 @@ func (m *Manager) All() []*Server {
 	return m.servers
 }
 
-// Add adds an item to the collection store.
+// Add adds an item to the collection store and invokes any registered add hooks.
 func (m *Manager) Add(s *Server) {
 	m.mu.Lock()
 	m.servers = append(m.servers, s)
+	hooks := m.addHooks
+	m.mu.Unlock()
+
+	// Invoke hooks outside the lock to avoid blocking other operations.
+	for _, hook := range hooks {
+		hook(s)
+	}
+}
+
+// OnServerAdd registers a callback that will be invoked whenever a server is
+// added to the manager. This is useful for components that need to subscribe
+// to new servers dynamically (e.g., the Axiom ingestor).
+func (m *Manager) OnServerAdd(hook ServerAddHook) {
+	m.mu.Lock()
+	m.addHooks = append(m.addHooks, hook)
 	m.mu.Unlock()
 }
 
