@@ -17,7 +17,8 @@
 13. [CLI Commands](#cli-commands)
 14. [Error Handling](#error-handling)
 15. [Events System](#events-system)
-16. [Development](#development)
+16. [Integrations](#integrations)
+17. [Development](#development)
 
 ---
 
@@ -35,6 +36,7 @@
 - Server-to-server transfer capabilities
 - Crash detection and automatic recovery
 - File management with quota enforcement
+- Axiom integration for observability and analytics
 
 ### Technical Stack
 
@@ -105,19 +107,20 @@ flowchart TB
 
 ### Package Structure
 
-| Package        | Purpose                                                              |
-| -------------- | -------------------------------------------------------------------- |
-| `cmd/`         | CLI command handlers (root, configure, diagnostics, selfupdate)      |
-| `config/`      | Configuration management (singleton pattern with thread-safe access) |
-| `server/`      | Server instance management, lifecycle, filesystem, backup operations |
-| `router/`      | HTTP API routes, handlers, middleware, WebSocket, token management   |
-| `environment/` | Docker environment abstraction and container management              |
-| `remote/`      | Panel API client for communication with Pelican Panel                |
-| `sftp/`        | Built-in SFTP server implementation                                  |
-| `events/`      | Event bus system for real-time updates                               |
-| `internal/`    | Internal utilities (database, models, cron jobs, diagnostics)        |
-| `parser/`      | Configuration file parsing (INI, YAML, JSON)                         |
-| `system/`      | System utilities and version information                             |
+| Package           | Purpose                                                              |
+| ----------------- | -------------------------------------------------------------------- |
+| `cmd/`            | CLI command handlers (root, configure, diagnostics, selfupdate)      |
+| `config/`         | Configuration management (singleton pattern with thread-safe access) |
+| `server/`         | Server instance management, lifecycle, filesystem, backup operations |
+| `router/`         | HTTP API routes, handlers, middleware, WebSocket, token management   |
+| `environment/`    | Docker environment abstraction and container management              |
+| `remote/`         | Panel API client for communication with Pelican Panel                |
+| `sftp/`           | Built-in SFTP server implementation                                  |
+| `events/`         | Event bus system for real-time updates                               |
+| `internal/`       | Internal utilities (database, models, cron jobs, diagnostics)        |
+| `internal/axiom/` | Axiom event ingestor for observability integration                   |
+| `parser/`         | Configuration file parsing (INI, YAML, JSON)                         |
+| `system/`         | System utilities and version information                             |
 
 ---
 
@@ -1960,6 +1963,15 @@ allow_cors_private_network: false
 
 # Ignore Panel config updates
 ignore_panel_config_updates: false
+
+# Axiom Integration (observability)
+axiom:
+  enabled: false
+  url: "https://api.axiom.co"
+  api_token: "xaat-xxxxxxxx"
+  dataset: "pelican-wings"
+  flush_interval: 5   # seconds
+  batch_size: 100
 ```
 
 ### Environment Variables
@@ -2126,6 +2138,43 @@ Events can be namespaced for filtering:
 backup completed:<backup-uuid>
 transfer status:<server-uuid>
 ```
+
+---
+
+## Integrations
+
+### Axiom (Observability)
+
+Wings supports direct integration with [Axiom](https://axiom.co) for event ingestion and observability. When enabled, server events (stats, status changes, and console output) are automatically batched and sent to Axiom's ingest API.
+
+**Configuration:**
+
+```yaml
+axiom:
+  enabled: true
+  url: "https://api.axiom.co"
+  api_token: "xaat-xxxxxxxx"
+  dataset: "pelican-wings"
+  flush_interval: 5   # seconds between flushes
+  batch_size: 100      # max events per batch
+```
+
+**Event Types:**
+
+| Type | Description | Rate |
+|------|-------------|------|
+| `stats` | CPU, memory, network, disk usage | ~1/sec per running server |
+| `status` | Server state transitions | On state change |
+| `console_output` | Console log lines | Variable |
+
+**Use Cases:**
+
+- Historical resource usage dashboards
+- Console log search and analysis
+- Crash detection and alerting
+- Capacity planning
+
+For detailed schema documentation, Axiom query examples, and operational notes, see **[AXIOM_INTEGRATION.md](AXIOM_INTEGRATION.md)**.
 
 ---
 

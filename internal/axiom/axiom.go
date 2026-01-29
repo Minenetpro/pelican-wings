@@ -12,6 +12,7 @@ import (
 	"github.com/goccy/go-json"
 
 	"github.com/Minenetpro/pelican-wings/config"
+	"github.com/Minenetpro/pelican-wings/environment"
 	"github.com/Minenetpro/pelican-wings/events"
 	"github.com/Minenetpro/pelican-wings/server"
 	"github.com/Minenetpro/pelican-wings/system"
@@ -153,30 +154,26 @@ func (ing *Ingestor) subscribeServer(ctx context.Context, s *server.Server) {
 }
 
 // statsEventData mirrors the structure published by server.Events().Publish(StatsEvent, ...).
+// The Event struct has no json tags, so Go uses default capitalized field names.
 type statsEventData struct {
-	Topic string              `json:"topic"`
-	Data  statsEventPayload   `json:"data"`
+	Topic string            `json:"Topic"`
+	Data  statsEventPayload `json:"Data"`
 }
 
+// statsEventPayload mirrors server.ResourceUsage which embeds environment.Stats.
+// We embed the real environment.Stats to stay in sync with upstream changes,
+// and only define the additional fields from ResourceUsage.
 type statsEventPayload struct {
-	Memory      uint64  `json:"memory_bytes"`
-	MemoryLimit uint64  `json:"memory_limit_bytes"`
-	CpuAbsolute float64 `json:"cpu_absolute"`
-	Network     struct {
-		RxBytes uint64 `json:"rx_bytes"`
-		TxBytes uint64 `json:"tx_bytes"`
-	} `json:"network"`
-	Uptime int64  `json:"uptime"`
-	Disk   int64  `json:"disk_bytes"`
-	State  *struct {
-		Value string `json:"value"`
-	} `json:"state,omitempty"`
+	environment.Stats        // Embeds: Memory, MemoryLimit, CpuAbsolute, Network, Uptime
+	State             *string `json:"state,omitempty"` // AtomicString marshals as plain string
+	Disk              int64   `json:"disk_bytes"`
 }
 
 // statusEventData mirrors the structure published by server.Events().Publish(StatusEvent, ...).
+// StatusEvent publishes a plain string (the state name), not a struct.
 type statusEventData struct {
-	Topic string `json:"topic"`
-	Data  string `json:"data"`
+	Topic string `json:"Topic"`
+	Data  string `json:"Data"`
 }
 
 // processEvent decodes an Events bus message and enqueues the corresponding
@@ -210,7 +207,7 @@ func (ing *Ingestor) processEvent(serverID string, data []byte) {
 			DiskBytes:        stats.Data.Disk,
 		}
 		if stats.Data.State != nil {
-			ev.State = stats.Data.State.Value
+			ev.State = *stats.Data.State
 		}
 		ing.enqueue(ev)
 
