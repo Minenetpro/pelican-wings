@@ -28,8 +28,9 @@ var format = archives.CompressedArchive{
 type AdapterType string
 
 const (
-	LocalBackupAdapter AdapterType = "wings"
-	S3BackupAdapter    AdapterType = "s3"
+	LocalBackupAdapter  AdapterType = "wings"
+	S3BackupAdapter     AdapterType = "s3"
+	ResticBackupAdapter AdapterType = "restic"
 )
 
 // RestoreCallback is a generic restoration callback that exists for both local
