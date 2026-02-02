@@ -9,6 +9,7 @@ import (
 	"github.com/apex/log"
 	"github.com/gin-gonic/gin"
 
+	"github.com/Minenetpro/pelican-wings/config"
 	"github.com/Minenetpro/pelican-wings/router/middleware"
 	"github.com/Minenetpro/pelican-wings/server"
 	"github.com/Minenetpro/pelican-wings/server/backup"
@@ -35,6 +36,12 @@ func postServerBackup(c *gin.Context) {
 		adapter = backup.NewLocal(client, data.Uuid, s.ID(), data.Ignore)
 	case backup.S3BackupAdapter:
 		adapter = backup.NewS3(client, data.Uuid, s.ID(), data.Ignore)
+	case backup.ResticBackupAdapter:
+		if !config.Get().System.Backups.Restic.Enabled {
+			middleware.CaptureAndAbort(c, errors.New("router/backups: restic backup adapter is not enabled"))
+			return
+		}
+		adapter = backup.NewRestic(client, data.Uuid, s.ID(), data.Ignore)
 	default:
 		middleware.CaptureAndAbort(c, errors.New("router/backups: provided adapter is not valid: "+string(data.Adapter)))
 		return
@@ -71,7 +78,7 @@ func postServerRestoreBackup(c *gin.Context) {
 	logger := middleware.ExtractLogger(c)
 
 	var data struct {
-		Adapter           backup.AdapterType `binding:"required,oneof=wings s3" json:"adapter"`
+		Adapter           backup.AdapterType `binding:"required,oneof=wings s3 restic" json:"adapter"`
 		TruncateDirectory bool               `json:"truncate_directory"`
 		// A UUID is always required for this endpoint, however the download URL
 		// is only present when the given adapter type is s3.
@@ -82,6 +89,10 @@ func postServerRestoreBackup(c *gin.Context) {
 	}
 	if data.Adapter == backup.S3BackupAdapter && data.DownloadUrl == "" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "The download_url field is required when the backup adapter is set to S3."})
+		return
+	}
+	if data.Adapter == backup.ResticBackupAdapter && !config.Get().System.Backups.Restic.Enabled {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "The restic backup adapter is not enabled on this node."})
 		return
 	}
 
@@ -127,7 +138,30 @@ func postServerRestoreBackup(c *gin.Context) {
 		return
 	}
 
-	// Since this is not a local backup we need to stream the archive and then
+	// Handle restic backup restoration - the backup is stored in the restic repository,
+	// no download URL is needed as restic pulls directly from the S3 repo.
+	if data.Adapter == backup.ResticBackupAdapter {
+		b := backup.NewRestic(client, c.Param("backup"), s.ID(), "")
+		b.WithLogContext(map[string]interface{}{
+			"server":     s.ID(),
+			"request_id": c.GetString("request_id"),
+		})
+		go func(s *server.Server, b backup.BackupInterface, logger *log.Entry) {
+			logger.Info("starting restoration process for server backup using restic driver")
+			if err := s.RestoreBackup(b, nil); err != nil {
+				logger.WithField("error", errors.WithStack(err)).Error("failed to restore restic backup to server")
+			}
+			s.Events().Publish(server.DaemonMessageEvent, "Completed server restoration from restic backup.")
+			s.Events().Publish(server.BackupRestoreCompletedEvent, "")
+			logger.Info("completed server restoration from restic backup")
+			s.SetRestoring(false)
+		}(s, b, logger)
+		hasError = false
+		c.Status(http.StatusAccepted)
+		return
+	}
+
+	// Since this is not a local or restic backup we need to stream the archive and then
 	// parse over the contents as we go in order to restore it to the server.
 	httpClient := http.Client{}
 	logger.Info("downloading backup from remote location...")
@@ -171,12 +205,50 @@ func postServerRestoreBackup(c *gin.Context) {
 	c.Status(http.StatusAccepted)
 }
 
-// deleteServerBackup deletes a local backup of a server. If the backup is not
-// found on the machine just return a 404 error. The service calling this
-// endpoint can make its own decisions as to how it wants to handle that
-// response.
+// deleteServerBackup deletes a backup of a server. For local backups, if the backup
+// is not found on the machine just return a 404 error. The service calling this
+// endpoint can make its own decisions as to how it wants to handle that response.
+// For restic backups, this removes the snapshot from the restic repository.
 func deleteServerBackup(c *gin.Context) {
-	b, _, err := backup.LocateLocal(middleware.ExtractApiClient(c), c.Param("backup"), middleware.ExtractServer(c).ID())
+	s := middleware.ExtractServer(c)
+	client := middleware.ExtractApiClient(c)
+
+	// Parse optional request body to determine adapter type
+	// Default to local (wings) adapter for backward compatibility
+	var data struct {
+		Adapter backup.AdapterType `json:"adapter"`
+	}
+	// Attempt to parse the body, but don't fail if empty (backward compatibility)
+	_ = c.ShouldBindJSON(&data)
+
+	// Default to local adapter if not specified
+	if data.Adapter == "" {
+		data.Adapter = backup.LocalBackupAdapter
+	}
+
+	// Handle restic backup deletion
+	if data.Adapter == backup.ResticBackupAdapter {
+		if !config.Get().System.Backups.Restic.Enabled {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"error": "The restic backup adapter is not enabled on this node.",
+			})
+			return
+		}
+		b := backup.NewRestic(client, c.Param("backup"), s.ID(), "")
+		b.WithLogContext(map[string]interface{}{
+			"server":     s.ID(),
+			"request_id": c.GetString("request_id"),
+		})
+		if err := b.Remove(); err != nil {
+			middleware.CaptureAndAbort(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+		return
+	}
+
+	// Handle local backup deletion (default behavior)
+	b, _, err := backup.LocateLocal(client, c.Param("backup"), s.ID())
 	if err != nil {
 		// Just return from the function at this point if the backup was not located.
 		if errors.Is(err, os.ErrNotExist) {

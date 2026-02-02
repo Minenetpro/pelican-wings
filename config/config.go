@@ -287,6 +287,37 @@ type Backups struct {
 
 	// RemoveBackupsOnServerDelete deletes backups associated with a server when the server is deleted
 	RemoveBackupsOnServerDelete bool `default:"true" yaml:"remove_backups_on_server_delete"`
+
+	// Restic configuration for restic-based backups to S3 repositories
+	Restic ResticConfig `yaml:"restic"`
+}
+
+// ResticConfig defines configuration for the restic backup adapter which stores
+// snapshots in an S3-compatible repository.
+type ResticConfig struct {
+	// Enabled determines whether the restic backup adapter is available.
+	Enabled bool `default:"false" yaml:"enabled"`
+
+	// Repository is the restic repository URL (e.g., s3:s3.amazonaws.com/bucket)
+	Repository string `yaml:"repository"`
+
+	// Password is the restic repository password (RESTIC_PASSWORD)
+	Password string `yaml:"password"`
+
+	// AWSAccessKeyID for S3 authentication
+	AWSAccessKeyID string `yaml:"aws_access_key_id"`
+
+	// AWSSecretAccessKey for S3 authentication
+	AWSSecretAccessKey string `yaml:"aws_secret_access_key"`
+
+	// AWSRegion for the S3 bucket
+	AWSRegion string `yaml:"aws_region"`
+
+	// BinaryPath is the path to the restic binary
+	BinaryPath string `default:"restic" yaml:"binary_path"`
+
+	// CacheDir is the directory for restic cache files
+	CacheDir string `default:"/var/cache/pelican/restic" yaml:"cache_dir"`
 }
 
 type Transfers struct {
@@ -661,6 +692,14 @@ func ConfigureDirectories() error {
 	log.WithField("path", _config.System.MachineID.Directory).Debug("ensuring machine-id directory exists")
 	if err := os.MkdirAll(_config.System.MachineID.Directory, 0o700); err != nil {
 		return err
+	}
+
+	// Create restic cache directory if restic backups are enabled
+	if _config.System.Backups.Restic.Enabled && _config.System.Backups.Restic.CacheDir != "" {
+		log.WithField("path", _config.System.Backups.Restic.CacheDir).Debug("ensuring restic cache directory exists")
+		if err := os.MkdirAll(_config.System.Backups.Restic.CacheDir, 0o700); err != nil {
+			return err
+		}
 	}
 	return nil
 }
