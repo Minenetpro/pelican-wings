@@ -129,7 +129,7 @@ func postServerRestoreBackup(c *gin.Context) {
 				logger.WithField("error", err).Error("failed to restore local backup to server")
 			}
 			s.Events().Publish(server.DaemonMessageEvent, "Completed server restoration from local backup.")
-			s.Events().Publish(server.BackupRestoreCompletedEvent, "")
+			s.Events().Publish(server.BackupRestoreCompletedEvent, b.Identifier())
 			logger.Info("completed server restoration from local backup")
 			s.SetRestoring(false)
 		}(s, b, logger)
@@ -152,7 +152,7 @@ func postServerRestoreBackup(c *gin.Context) {
 				logger.WithField("error", errors.WithStack(err)).Error("failed to restore restic backup to server")
 			}
 			s.Events().Publish(server.DaemonMessageEvent, "Completed server restoration from restic backup.")
-			s.Events().Publish(server.BackupRestoreCompletedEvent, "")
+			s.Events().Publish(server.BackupRestoreCompletedEvent, b.Identifier())
 			logger.Info("completed server restoration from restic backup")
 			s.SetRestoring(false)
 		}(s, b, logger)
@@ -196,7 +196,7 @@ func postServerRestoreBackup(c *gin.Context) {
 			logger.WithField("error", errors.WithStack(err)).Error("failed to restore remote S3 backup to server")
 		}
 		s.Events().Publish(server.DaemonMessageEvent, "Completed server restoration from S3 backup.")
-		s.Events().Publish(server.BackupRestoreCompletedEvent, "")
+		s.Events().Publish(server.BackupRestoreCompletedEvent, uuid)
 		logger.Info("completed server restoration from S3 backup")
 		s.SetRestoring(false)
 	}(s, c.Param("backup"), logger)
@@ -217,13 +217,16 @@ func getServerBackupSnapshots(c *gin.Context) {
 		return
 	}
 
+	// Check if client wants size information (default: false for performance)
+	includeStats := c.Query("include_stats") == "true"
+
 	b := backup.NewRestic(client, "", s.ID(), "")
 	b.WithLogContext(map[string]interface{}{
 		"server":     s.ID(),
 		"request_id": c.GetString("request_id"),
 	})
 
-	snapshots, err := b.ListSnapshots(c.Request.Context())
+	snapshots, err := b.ListSnapshots(c.Request.Context(), includeStats)
 	if err != nil {
 		middleware.CaptureAndAbort(c, err)
 		return

@@ -158,6 +158,10 @@ GET /api/servers/{server}/backup/snapshots
 Authorization: Bearer {token}
 ```
 
+| Query Parameter | Type | Default | Description |
+|-----------------|------|---------|-------------|
+| `include_stats` | bool | `false` | Include size and file count (slower, requires additional restic command per snapshot) |
+
 **Response:** `200 OK`
 
 ```json
@@ -175,9 +179,28 @@ Authorization: Bearer {token}
 }
 ```
 
+**Response with `?include_stats=true`:** `200 OK`
+
+```json
+{
+    "snapshots": [
+        {
+            "id": "d95a2254abcd1234efgh5678ijkl9012mnop3456",
+            "short_id": "d95a2254",
+            "time": "2024-02-02T17:32:46.258Z",
+            "backup_uuid": "a09316f2-c1df-44b9-8244-6c6789eb75r1",
+            "server_uuid": "342dd230-48d3-4b39-a7fe-ba0fb5e62e80",
+            "paths": ["/var/lib/pelican/volumes/342dd230-48d3-4b39-a7fe-ba0fb5e62e80"],
+            "size": 1073741824,
+            "total_file_count": 5432
+        }
+    ]
+}
+```
+
 ### Get Snapshot Status
 
-Checks if a specific backup snapshot exists in the restic repository.
+Checks if a specific backup snapshot exists in the restic repository. Always includes size information.
 
 ```http
 GET /api/servers/{server}/backup/{backup}/status
@@ -195,7 +218,9 @@ Authorization: Bearer {token}
         "time": "2024-02-02T17:32:46.258Z",
         "backup_uuid": "a09316f2-c1df-44b9-8244-6c6789eb75r1",
         "server_uuid": "342dd230-48d3-4b39-a7fe-ba0fb5e62e80",
-        "paths": ["/var/lib/pelican/volumes/342dd230-48d3-4b39-a7fe-ba0fb5e62e80"]
+        "paths": ["/var/lib/pelican/volumes/342dd230-48d3-4b39-a7fe-ba0fb5e62e80"],
+        "size": 1073741824,
+        "total_file_count": 5432
     }
 }
 ```
@@ -208,6 +233,57 @@ Authorization: Bearer {token}
     "snapshot": null
 }
 ```
+
+## SSE Events
+
+Subscribe to backup events via Server-Sent Events (SSE) at:
+
+```http
+GET /api/events?servers={server-uuid}
+Authorization: Bearer {token}
+```
+
+The SSE endpoint streams real-time events including backup completion and restore completion events.
+
+### backup completed
+
+Sent when a backup operation completes (success or failure).
+
+```json
+{
+    "server_id": "342dd230-48d3-4b39-a7fe-ba0fb5e62e80",
+    "backup_uuid": "a09316f2-c1df-44b9-8244-6c6789eb75r1",
+    "is_successful": true,
+    "checksum": "",
+    "checksum_type": "sha1",
+    "file_size": 0
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `server_id` | UUID of the server |
+| `backup_uuid` | UUID of the backup |
+| `is_successful` | Whether the backup completed successfully |
+| `checksum` | Empty for restic backups (restic handles checksums internally) |
+| `checksum_type` | Always "sha1" |
+| `file_size` | 0 for restic backups (size not tracked locally) |
+
+### backup restore completed
+
+Sent when a backup restore operation completes.
+
+```json
+{
+    "server_id": "342dd230-48d3-4b39-a7fe-ba0fb5e62e80",
+    "backup_uuid": "a09316f2-c1df-44b9-8244-6c6789eb75r1"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `server_id` | UUID of the server |
+| `backup_uuid` | UUID of the backup that was restored |
 
 ## Multi-Tenant Security
 

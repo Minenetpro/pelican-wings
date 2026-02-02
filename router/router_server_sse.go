@@ -31,14 +31,28 @@ type sseStatusData struct {
 }
 
 type sseStatsData struct {
-	ServerID         string                `json:"server_id"`
-	MemoryBytes      uint64                `json:"memory_bytes"`
-	MemoryLimitBytes uint64                `json:"memory_limit_bytes"`
-	CpuAbsolute      float64               `json:"cpu_absolute"`
+	ServerID         string                   `json:"server_id"`
+	MemoryBytes      uint64                   `json:"memory_bytes"`
+	MemoryLimitBytes uint64                   `json:"memory_limit_bytes"`
+	CpuAbsolute      float64                  `json:"cpu_absolute"`
 	Network          environment.NetworkStats `json:"network"`
-	Uptime           int64                 `json:"uptime"`
-	State            string                `json:"state"`
-	DiskBytes        int64                 `json:"disk_bytes"`
+	Uptime           int64                    `json:"uptime"`
+	State            string                   `json:"state"`
+	DiskBytes        int64                    `json:"disk_bytes"`
+}
+
+type sseBackupCompletedData struct {
+	ServerID     string `json:"server_id"`
+	BackupUUID   string `json:"backup_uuid"`
+	IsSuccessful bool   `json:"is_successful"`
+	Checksum     string `json:"checksum"`
+	ChecksumType string `json:"checksum_type"`
+	FileSize     int64  `json:"file_size"`
+}
+
+type sseBackupRestoreCompletedData struct {
+	ServerID   string `json:"server_id"`
+	BackupUUID string `json:"backup_uuid"`
 }
 
 // ssePayload is the internal fan-in type sent from per-server goroutines to the
@@ -204,6 +218,38 @@ func getServerEvents(c *gin.Context) {
 						line, _ := e.Data.(string)
 						select {
 						case outChan <- ssePayload{event: "console output", data: sseConsoleData{ServerID: sid, Line: line}}:
+						case <-ctx.Done():
+							return
+						}
+					case server.BackupCompletedEvent:
+						raw, err := json.Marshal(e.Data)
+						if err != nil {
+							continue
+						}
+						var data map[string]interface{}
+						if err := json.Unmarshal(raw, &data); err != nil {
+							continue
+						}
+						backupData := sseBackupCompletedData{
+							ServerID:     sid,
+							BackupUUID:   data["uuid"].(string),
+							IsSuccessful: data["is_successful"].(bool),
+							Checksum:     data["checksum"].(string),
+							ChecksumType: data["checksum_type"].(string),
+							FileSize:     int64(data["file_size"].(float64)),
+						}
+						select {
+						case outChan <- ssePayload{event: "backup completed", data: backupData}:
+						case <-ctx.Done():
+							return
+						}
+					case server.BackupRestoreCompletedEvent:
+						backupUUID := ""
+						if str, ok := e.Data.(string); ok {
+							backupUUID = str
+						}
+						select {
+						case outChan <- ssePayload{event: "backup restore completed", data: sseBackupRestoreCompletedData{ServerID: sid, BackupUUID: backupUUID}}:
 						case <-ctx.Done():
 							return
 						}
