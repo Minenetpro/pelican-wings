@@ -205,6 +205,65 @@ func postServerRestoreBackup(c *gin.Context) {
 	c.Status(http.StatusAccepted)
 }
 
+// getServerBackupSnapshots lists all restic snapshots for a server.
+func getServerBackupSnapshots(c *gin.Context) {
+	s := middleware.ExtractServer(c)
+	client := middleware.ExtractApiClient(c)
+
+	if !config.Get().System.Backups.Restic.Enabled {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": "The restic backup adapter is not enabled on this node.",
+		})
+		return
+	}
+
+	b := backup.NewRestic(client, "", s.ID(), "")
+	b.WithLogContext(map[string]interface{}{
+		"server":     s.ID(),
+		"request_id": c.GetString("request_id"),
+	})
+
+	snapshots, err := b.ListSnapshots(c.Request.Context())
+	if err != nil {
+		middleware.CaptureAndAbort(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"snapshots": snapshots,
+	})
+}
+
+// getServerBackupStatus checks if a specific backup snapshot exists in the restic repository.
+func getServerBackupStatus(c *gin.Context) {
+	s := middleware.ExtractServer(c)
+	client := middleware.ExtractApiClient(c)
+
+	if !config.Get().System.Backups.Restic.Enabled {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"error": "The restic backup adapter is not enabled on this node.",
+		})
+		return
+	}
+
+	b := backup.NewRestic(client, c.Param("backup"), s.ID(), "")
+	b.WithLogContext(map[string]interface{}{
+		"server":     s.ID(),
+		"request_id": c.GetString("request_id"),
+	})
+
+	snapshot, err := b.GetSnapshotStatus(c.Request.Context())
+	if err != nil {
+		middleware.CaptureAndAbort(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"exists":   snapshot != nil,
+		"snapshot": snapshot,
+	})
+}
+
 // deleteServerBackup deletes a backup of a server. For local backups, if the backup
 // is not found on the machine just return a 404 error. The service calling this
 // endpoint can make its own decisions as to how it wants to handle that response.

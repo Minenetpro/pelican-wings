@@ -73,6 +73,11 @@ func (b *LocalBackup) WithLogContext(c map[string]interface{}) {
 	b.logContext = c
 }
 
+// SkipPanelNotification returns false as local backups should notify the Panel.
+func (b *LocalBackup) SkipPanelNotification() bool {
+	return false
+}
+
 // Generate generates a backup of the selected files and pushes it to the
 // defined location for this instance.
 func (b *LocalBackup) Generate(ctx context.Context, fsys *filesystem.Filesystem, ignore string) (*ArchiveDetails, error) {

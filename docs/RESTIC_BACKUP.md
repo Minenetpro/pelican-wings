@@ -149,6 +149,66 @@ Content-Type: application/json
 
 This runs `restic forget --tag backup_uuid:{backup} --prune` to remove the snapshot and clean up unreferenced data.
 
+### List Snapshots
+
+Lists all restic snapshots for a server.
+
+```http
+GET /api/servers/{server}/backup/snapshots
+Authorization: Bearer {token}
+```
+
+**Response:** `200 OK`
+
+```json
+{
+    "snapshots": [
+        {
+            "id": "d95a2254abcd1234efgh5678ijkl9012mnop3456",
+            "short_id": "d95a2254",
+            "time": "2024-02-02T17:32:46.258Z",
+            "backup_uuid": "a09316f2-c1df-44b9-8244-6c6789eb75r1",
+            "server_uuid": "342dd230-48d3-4b39-a7fe-ba0fb5e62e80",
+            "paths": ["/var/lib/pelican/volumes/342dd230-48d3-4b39-a7fe-ba0fb5e62e80"]
+        }
+    ]
+}
+```
+
+### Get Snapshot Status
+
+Checks if a specific backup snapshot exists in the restic repository.
+
+```http
+GET /api/servers/{server}/backup/{backup}/status
+Authorization: Bearer {token}
+```
+
+**Response (snapshot exists):** `200 OK`
+
+```json
+{
+    "exists": true,
+    "snapshot": {
+        "id": "d95a2254abcd1234efgh5678ijkl9012mnop3456",
+        "short_id": "d95a2254",
+        "time": "2024-02-02T17:32:46.258Z",
+        "backup_uuid": "a09316f2-c1df-44b9-8244-6c6789eb75r1",
+        "server_uuid": "342dd230-48d3-4b39-a7fe-ba0fb5e62e80",
+        "paths": ["/var/lib/pelican/volumes/342dd230-48d3-4b39-a7fe-ba0fb5e62e80"]
+    }
+}
+```
+
+**Response (snapshot not found):** `200 OK`
+
+```json
+{
+    "exists": false,
+    "snapshot": null
+}
+```
+
 ## Multi-Tenant Security
 
 The restic adapter implements strict isolation between servers/customers:
@@ -162,9 +222,9 @@ The restic adapter implements strict isolation between servers/customers:
    /var/lib/pelican/volumes/{server_uuid}/
    ```
 
-4. **Strict Filtering**: All operations (restore, delete) filter by `backup_uuid` tag, preventing access to other snapshots
+4. **Strict Filtering**: All operations (restore, delete, status check) filter by `backup_uuid` tag, preventing access to other snapshots
 
-5. **No Listing**: Wings does not expose snapshot listing - the external service tracks backups via the `backup_uuid` it provides
+5. **Server-Scoped Listing**: The snapshot listing endpoint only returns snapshots for the specified server (filtered by `server_uuid` tag)
 
 ## How It Works
 

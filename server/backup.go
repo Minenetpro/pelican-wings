@@ -69,13 +69,15 @@ func (s *Server) Backup(b backup.BackupInterface) error {
 
 	ad, err := b.Generate(s.Context(), s.Filesystem(), ignored)
 	if err != nil {
-		if err := s.notifyPanelOfBackup(b.Identifier(), &backup.ArchiveDetails{}, false); err != nil {
-			s.Log().WithFields(log.Fields{
-				"backup": b.Identifier(),
-				"error":  err,
-			}).Warn("failed to notify panel of failed backup state")
-		} else {
-			s.Log().WithField("backup", b.Identifier()).Info("notified panel of failed backup state")
+		if !b.SkipPanelNotification() {
+			if err := s.notifyPanelOfBackup(b.Identifier(), &backup.ArchiveDetails{}, false); err != nil {
+				s.Log().WithFields(log.Fields{
+					"backup": b.Identifier(),
+					"error":  err,
+				}).Warn("failed to notify panel of failed backup state")
+			} else {
+				s.Log().WithField("backup", b.Identifier()).Info("notified panel of failed backup state")
+			}
 		}
 
 		s.Events().Publish(BackupCompletedEvent+":"+b.Identifier(), map[string]interface{}{
@@ -91,13 +93,18 @@ func (s *Server) Backup(b backup.BackupInterface) error {
 
 	// Try to notify the panel about the status of this backup. If for some reason this request
 	// fails, delete the archive from the daemon and return that error up the chain to the caller.
-	if notifyError := s.notifyPanelOfBackup(b.Identifier(), ad, true); notifyError != nil {
-		_ = b.Remove()
+	// Skip panel notification for adapters that manage their own tracking (e.g., restic).
+	if !b.SkipPanelNotification() {
+		if notifyError := s.notifyPanelOfBackup(b.Identifier(), ad, true); notifyError != nil {
+			_ = b.Remove()
 
-		s.Log().WithField("error", notifyError).Info("failed to notify panel of successful backup state")
-		return err
+			s.Log().WithField("error", notifyError).Info("failed to notify panel of successful backup state")
+			return err
+		} else {
+			s.Log().WithField("backup", b.Identifier()).Info("notified panel of successful backup state")
+		}
 	} else {
-		s.Log().WithField("backup", b.Identifier()).Info("notified panel of successful backup state")
+		s.Log().WithField("backup", b.Identifier()).Info("backup completed, skipping panel notification")
 	}
 
 	// Emit an event over the socket so we can update the backup in realtime on
@@ -131,7 +138,11 @@ func (s *Server) RestoreBackup(b backup.BackupInterface, reader io.ReadCloser) (
 	}()
 	// Send an API call to the Panel as soon as this function is done running so that
 	// the Panel is informed of the restoration status of this backup.
+	// Skip for adapters that manage their own tracking (e.g., restic).
 	defer func() {
+		if b.SkipPanelNotification() {
+			return
+		}
 		if rerr := s.client.SendRestorationStatus(s.Context(), b.Identifier(), err == nil); rerr != nil {
 			s.Log().WithField("error", rerr).WithField("backup", b.Identifier()).Error("failed to notify Panel of backup restoration status")
 		}
