@@ -70,6 +70,9 @@ type BackupInterface interface {
 	// the given source. Not every backup implementation will support this nor
 	// will every implementation require a reader be provided.
 	Restore(context.Context, io.Reader, RestoreCallback) error
+	// SkipPanelNotification returns true if the backup adapter handles its own
+	// tracking and should not notify the Panel of backup status.
+	SkipPanelNotification() bool
 }
 
 type Backup struct {

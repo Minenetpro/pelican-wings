@@ -117,7 +117,9 @@ func Configure(m *wserver.Manager, client remote.Client) *gin.Engine {
 		backup := server.Group("/backup")
 		{
 			backup.POST("", postServerBackup)
+			backup.GET("/snapshots", getServerBackupSnapshots)
 			backup.POST("/:backup/restore", postServerRestoreBackup)
+			backup.GET("/:backup/status", getServerBackupStatus)
 			backup.DELETE("/:backup", deleteServerBackup)
 		}
 	}

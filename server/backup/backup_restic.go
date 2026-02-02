@@ -55,6 +55,11 @@ func (r *ResticBackup) WithLogContext(c map[string]interface{}) {
 	r.logContext = c
 }
 
+// SkipPanelNotification returns true as restic backups are managed externally.
+func (r *ResticBackup) SkipPanelNotification() bool {
+	return true
+}
+
 // Remove removes a backup snapshot from the restic repository.
 func (r *ResticBackup) Remove() error {
 	ctx := context.Background()
@@ -62,17 +67,28 @@ func (r *ResticBackup) Remove() error {
 
 	r.log().Info("removing backup snapshot from restic repository")
 
-	// Build forget command arguments
-	args := []string{"forget", "--tag", r.backupTag(), "--prune"}
+	// Find the snapshot ID first
+	snapshotID, err := r.findSnapshotByTag(ctx)
+	if err != nil {
+		return errors.Wrap(err, "backup: failed to find snapshot to remove")
+	}
+
+	if snapshotID == "" {
+		r.log().Warn("no snapshot found with the specified backup_uuid, nothing to remove")
+		return nil
+	}
+
+	// Build forget command arguments with specific snapshot ID
+	args := []string{"forget", snapshotID, "--prune"}
 
 	// Add cache directory if configured
 	if cfg.CacheDir != "" {
 		args = append(args, "--cache-dir", cfg.CacheDir)
 	}
 
-	// Use forget with the backup_uuid tag to remove only this specific snapshot
+	// Use forget with specific snapshot ID to remove only this snapshot
 	// The --prune flag removes unreferenced data from the repository
-	_, err := r.runRestic(ctx, args...)
+	_, err = r.runRestic(ctx, args...)
 	if err != nil {
 		return errors.Wrap(err, "backup: failed to remove restic snapshot")
 	}
@@ -130,8 +146,6 @@ func (r *ResticBackup) Generate(ctx context.Context, _ *filesystem.Filesystem, i
 	r.log().WithField("output", string(output)).Debug("restic backup output")
 	r.log().Info("successfully created restic backup")
 
-	// Restic handles checksums internally, return minimal details
-	// The external service tracking backups will use the backup_uuid for identification
 	return &ArchiveDetails{
 		Checksum:     "",
 		ChecksumType: "none",
@@ -305,6 +319,89 @@ func (r *ResticBackup) ensureRepository(ctx context.Context) error {
 
 	r.log().Info("successfully initialized restic repository")
 	return nil
+}
+
+// SnapshotInfo represents snapshot data for API responses.
+type SnapshotInfo struct {
+	ID         string   `json:"id"`
+	ShortID    string   `json:"short_id"`
+	Time       string   `json:"time"`
+	BackupUUID string   `json:"backup_uuid"`
+	ServerUUID string   `json:"server_uuid"`
+	Paths      []string `json:"paths"`
+}
+
+// parseSnapshotToInfo converts a resticSnapshot to SnapshotInfo, extracting UUIDs from tags.
+func parseSnapshotToInfo(snapshot resticSnapshot) SnapshotInfo {
+	info := SnapshotInfo{
+		ID:      snapshot.ID,
+		ShortID: snapshot.ShortID,
+		Time:    snapshot.Time,
+		Paths:   snapshot.Paths,
+	}
+	for _, tag := range snapshot.Tags {
+		if strings.HasPrefix(tag, "backup_uuid:") {
+			info.BackupUUID = strings.TrimPrefix(tag, "backup_uuid:")
+		}
+		if strings.HasPrefix(tag, "server_uuid:") {
+			info.ServerUUID = strings.TrimPrefix(tag, "server_uuid:")
+		}
+	}
+	return info
+}
+
+// ListSnapshots returns all snapshots for this server from the restic repository.
+func (r *ResticBackup) ListSnapshots(ctx context.Context) ([]SnapshotInfo, error) {
+	cfg := config.Get().System.Backups.Restic
+
+	args := []string{"snapshots", "--json", "--tag", r.serverTag()}
+	if cfg.CacheDir != "" {
+		args = append(args, "--cache-dir", cfg.CacheDir)
+	}
+
+	output, err := r.runRestic(ctx, args...)
+	if err != nil {
+		return nil, errors.Wrap(err, "backup: failed to list restic snapshots")
+	}
+
+	var snapshots []resticSnapshot
+	if err := json.Unmarshal(output, &snapshots); err != nil {
+		return nil, errors.Wrap(err, "backup: failed to parse restic snapshots output")
+	}
+
+	result := make([]SnapshotInfo, 0, len(snapshots))
+	for _, s := range snapshots {
+		result = append(result, parseSnapshotToInfo(s))
+	}
+
+	return result, nil
+}
+
+// GetSnapshotStatus checks if a snapshot exists for this backup and returns its info.
+func (r *ResticBackup) GetSnapshotStatus(ctx context.Context) (*SnapshotInfo, error) {
+	cfg := config.Get().System.Backups.Restic
+
+	args := []string{"snapshots", "--json", "--tag", r.backupTag()}
+	if cfg.CacheDir != "" {
+		args = append(args, "--cache-dir", cfg.CacheDir)
+	}
+
+	output, err := r.runRestic(ctx, args...)
+	if err != nil {
+		return nil, errors.Wrap(err, "backup: failed to get restic snapshot status")
+	}
+
+	var snapshots []resticSnapshot
+	if err := json.Unmarshal(output, &snapshots); err != nil {
+		return nil, errors.Wrap(err, "backup: failed to parse restic snapshots output")
+	}
+
+	if len(snapshots) == 0 {
+		return nil, nil
+	}
+
+	info := parseSnapshotToInfo(snapshots[0])
+	return &info, nil
 }
 
 // findSnapshotByTag finds a snapshot ID by its backup_uuid tag.
