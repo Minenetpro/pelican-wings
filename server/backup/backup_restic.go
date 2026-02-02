@@ -38,6 +38,12 @@ type resticSnapshot struct {
 	Paths    []string `json:"paths"`
 }
 
+// resticStats represents the stats output from restic stats command.
+type resticStats struct {
+	TotalSize      int64 `json:"total_size"`
+	TotalFileCount int64 `json:"total_file_count"`
+}
+
 func NewRestic(client remote.Client, uuid string, suuid string, ignore string) *ResticBackup {
 	return &ResticBackup{
 		Backup{
@@ -323,12 +329,14 @@ func (r *ResticBackup) ensureRepository(ctx context.Context) error {
 
 // SnapshotInfo represents snapshot data for API responses.
 type SnapshotInfo struct {
-	ID         string   `json:"id"`
-	ShortID    string   `json:"short_id"`
-	Time       string   `json:"time"`
-	BackupUUID string   `json:"backup_uuid"`
-	ServerUUID string   `json:"server_uuid"`
-	Paths      []string `json:"paths"`
+	ID             string   `json:"id"`
+	ShortID        string   `json:"short_id"`
+	Time           string   `json:"time"`
+	BackupUUID     string   `json:"backup_uuid"`
+	ServerUUID     string   `json:"server_uuid"`
+	Paths          []string `json:"paths"`
+	Size           *int64   `json:"size,omitempty"`
+	TotalFileCount *int64   `json:"total_file_count,omitempty"`
 }
 
 // parseSnapshotToInfo converts a resticSnapshot to SnapshotInfo, extracting UUIDs from tags.
@@ -350,8 +358,43 @@ func parseSnapshotToInfo(snapshot resticSnapshot) SnapshotInfo {
 	return info
 }
 
+// GetSnapshotStats retrieves size statistics for a specific snapshot.
+func (r *ResticBackup) GetSnapshotStats(ctx context.Context, snapshotID string) (*resticStats, error) {
+	cfg := config.Get().System.Backups.Restic
+
+	args := []string{"stats", "--json", snapshotID}
+	if cfg.CacheDir != "" {
+		args = append(args, "--cache-dir", cfg.CacheDir)
+	}
+
+	output, err := r.runRestic(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	var stats resticStats
+	if err := json.Unmarshal(output, &stats); err != nil {
+		return nil, errors.Wrap(err, "backup: failed to parse restic stats output")
+	}
+
+	return &stats, nil
+}
+
+// EnrichSnapshotWithStats adds size information to a SnapshotInfo.
+func (r *ResticBackup) EnrichSnapshotWithStats(ctx context.Context, info *SnapshotInfo) {
+	stats, err := r.GetSnapshotStats(ctx, info.ID)
+	if err != nil {
+		r.log().WithField("snapshot", info.ID).Debug("could not retrieve snapshot stats")
+		return
+	}
+	info.Size = &stats.TotalSize
+	info.TotalFileCount = &stats.TotalFileCount
+}
+
 // ListSnapshots returns all snapshots for this server from the restic repository.
-func (r *ResticBackup) ListSnapshots(ctx context.Context) ([]SnapshotInfo, error) {
+// If includeStats is true, it will also fetch size information for each snapshot
+// (this is slower as it requires an additional restic command per snapshot).
+func (r *ResticBackup) ListSnapshots(ctx context.Context, includeStats bool) ([]SnapshotInfo, error) {
 	cfg := config.Get().System.Backups.Restic
 
 	args := []string{"snapshots", "--json", "--tag", r.serverTag()}
@@ -371,7 +414,11 @@ func (r *ResticBackup) ListSnapshots(ctx context.Context) ([]SnapshotInfo, error
 
 	result := make([]SnapshotInfo, 0, len(snapshots))
 	for _, s := range snapshots {
-		result = append(result, parseSnapshotToInfo(s))
+		info := parseSnapshotToInfo(s)
+		if includeStats {
+			r.EnrichSnapshotWithStats(ctx, &info)
+		}
+		result = append(result, info)
 	}
 
 	return result, nil
@@ -401,6 +448,7 @@ func (r *ResticBackup) GetSnapshotStatus(ctx context.Context) (*SnapshotInfo, er
 	}
 
 	info := parseSnapshotToInfo(snapshots[0])
+	r.EnrichSnapshotWithStats(ctx, &info)
 	return &info, nil
 }
 
