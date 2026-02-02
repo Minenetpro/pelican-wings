@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04]
+        os: [blacksmith-4vcpu-ubuntu-2204]
         go: ["1.24.7", "1.25.1"]
         goos: [linux]
         goarch: [amd64, arm64]
