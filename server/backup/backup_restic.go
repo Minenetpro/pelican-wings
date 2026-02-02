@@ -73,19 +73,19 @@ func (r *ResticBackup) Remove() error {
 
 	r.log().Info("removing backup snapshot from restic repository")
 
-	// Find the snapshot ID first
-	snapshotID, err := r.findSnapshotByTag(ctx)
+	// Find the snapshot first
+	snapshot, err := r.findSnapshotByTag(ctx)
 	if err != nil {
 		return errors.Wrap(err, "backup: failed to find snapshot to remove")
 	}
 
-	if snapshotID == "" {
+	if snapshot == nil {
 		r.log().Warn("no snapshot found with the specified backup_uuid, nothing to remove")
 		return nil
 	}
 
 	// Build forget command arguments with specific snapshot ID
-	args := []string{"forget", snapshotID, "--prune"}
+	args := []string{"forget", snapshot.ID, "--prune"}
 
 	// Add cache directory if configured
 	if cfg.CacheDir != "" {
@@ -161,44 +161,86 @@ func (r *ResticBackup) Generate(ctx context.Context, _ *filesystem.Filesystem, i
 }
 
 // Restore restores a backup from the restic repository to the server's data directory.
+// This supports cross-server restore by extracting files from the original server's
+// path and placing them in the target server's directory.
 func (r *ResticBackup) Restore(ctx context.Context, _ io.Reader, callback RestoreCallback) error {
 	cfg := config.Get().System.Backups.Restic
 
-	// Find the snapshot ID for this backup_uuid
-	snapshotID, err := r.findSnapshotByTag(ctx)
+	// Find the snapshot for this backup_uuid
+	snapshot, err := r.findSnapshotByTag(ctx)
 	if err != nil {
 		return errors.Wrap(err, "backup: failed to find restic snapshot")
 	}
 
-	if snapshotID == "" {
+	if snapshot == nil {
 		return errors.New("backup: no snapshot found with the specified backup_uuid")
 	}
 
+	// Determine the source path from the snapshot (the original server's data directory)
+	if len(snapshot.Paths) == 0 {
+		return errors.New("backup: snapshot has no paths to restore")
+	}
+	sourcePath := snapshot.Paths[0]
+
+	// Target path is the current server's data directory
 	targetPath := filepath.Join(config.Get().System.Data, r.ServerUuid)
 
-	r.log().WithField("snapshot", snapshotID).WithField("target", targetPath).Info("restoring restic backup")
+	r.log().WithField("snapshot", snapshot.ID).
+		WithField("source", sourcePath).
+		WithField("target", targetPath).
+		Info("restoring restic backup")
 
-	// Build restore command
-	args := []string{
-		"restore",
-		snapshotID,
-		"--target", "/",
-	}
-
-	// Add cache directory if configured
+	// Use restic dump to extract files as tar and pipe to tar for extraction.
+	// This allows restoring from one server to another by extracting the original
+	// server's files into the target server's directory.
+	dumpArgs := []string{"dump", "--archive", "tar", snapshot.ID, sourcePath}
 	if cfg.CacheDir != "" {
-		args = append(args, "--cache-dir", cfg.CacheDir)
+		dumpArgs = append(dumpArgs, "--cache-dir", cfg.CacheDir)
 	}
 
-	// Execute the restore
-	output, err := r.runRestic(ctx, args...)
+	// Create the restic dump command
+	resticCmd := exec.CommandContext(ctx, cfg.BinaryPath, dumpArgs...)
+	resticCmd.Env = r.buildEnv()
+
+	// Create the tar extraction command
+	tarCmd := exec.CommandContext(ctx, "tar", "-xf", "-", "-C", targetPath)
+
+	// Pipe restic dump output to tar stdin
+	var resticStderr, tarStderr bytes.Buffer
+	resticCmd.Stderr = &resticStderr
+
+	pipe, err := resticCmd.StdoutPipe()
 	if err != nil {
-		return errors.Wrap(err, "backup: failed to restore restic backup")
+		return errors.Wrap(err, "backup: failed to create pipe for restore")
+	}
+	tarCmd.Stdin = pipe
+	tarCmd.Stderr = &tarStderr
+
+	r.log().Debug("starting restic dump and tar extraction")
+
+	// Start both commands
+	if err := resticCmd.Start(); err != nil {
+		return errors.Wrap(err, "backup: failed to start restic dump")
+	}
+	if err := tarCmd.Start(); err != nil {
+		resticCmd.Process.Kill()
+		return errors.Wrap(err, "backup: failed to start tar extraction")
 	}
 
-	r.log().WithField("output", string(output)).Debug("restic restore output")
-	r.log().Info("successfully restored restic backup")
+	// Wait for both commands to complete
+	resticErr := resticCmd.Wait()
+	tarErr := tarCmd.Wait()
 
+	if resticErr != nil {
+		r.log().WithField("stderr", resticStderr.String()).Error("restic dump failed")
+		return errors.Wrap(resticErr, "backup: restic dump failed: "+resticStderr.String())
+	}
+	if tarErr != nil {
+		r.log().WithField("stderr", tarStderr.String()).Error("tar extraction failed")
+		return errors.Wrap(tarErr, "backup: tar extraction failed: "+tarStderr.String())
+	}
+
+	r.log().Info("successfully restored restic backup")
 	return nil
 }
 
@@ -452,8 +494,8 @@ func (r *ResticBackup) GetSnapshotStatus(ctx context.Context) (*SnapshotInfo, er
 	return &info, nil
 }
 
-// findSnapshotByTag finds a snapshot ID by its backup_uuid tag.
-func (r *ResticBackup) findSnapshotByTag(ctx context.Context) (string, error) {
+// findSnapshotByTag finds a snapshot by its backup_uuid tag and returns full info.
+func (r *ResticBackup) findSnapshotByTag(ctx context.Context) (*SnapshotInfo, error) {
 	cfg := config.Get().System.Backups.Restic
 
 	args := []string{"snapshots", "--json", "--tag", r.backupTag()}
@@ -463,18 +505,19 @@ func (r *ResticBackup) findSnapshotByTag(ctx context.Context) (string, error) {
 
 	output, err := r.runRestic(ctx, args...)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var snapshots []resticSnapshot
 	if err := json.Unmarshal(output, &snapshots); err != nil {
-		return "", errors.Wrap(err, "backup: failed to parse restic snapshots output")
+		return nil, errors.Wrap(err, "backup: failed to parse restic snapshots output")
 	}
 
 	if len(snapshots) == 0 {
-		return "", nil
+		return nil, nil
 	}
 
 	// Return the first (and should be only) matching snapshot
-	return snapshots[0].ID, nil
+	info := parseSnapshotToInfo(snapshots[0])
+	return &info, nil
 }

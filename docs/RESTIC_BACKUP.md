@@ -111,7 +111,7 @@ The backup runs asynchronously. The snapshot is tagged with:
 
 ### Restore Backup
 
-Restores a server from a restic snapshot.
+Restores a server from a restic snapshot. **Cross-server restore is supported** - you can restore a backup from one server to a different server.
 
 ```http
 POST /api/servers/{server}/backup/{backup}/restore
@@ -130,6 +130,11 @@ Content-Type: application/json
 |-------|------|----------|-------------|
 | `adapter` | string | Yes | Must be `"restic"` |
 | `truncate_directory` | bool | No | If true, deletes all server files before restoring |
+
+**Cross-Server Restore:**
+- The `{server}` in the URL is the **target** server where files will be restored
+- The `{backup}` UUID identifies the backup snapshot (which may have been created from a different server)
+- Files from the original server's directory are extracted directly into the target server's directory
 
 ### Delete Backup
 
@@ -313,11 +318,14 @@ The restic adapter implements strict isolation between servers/customers:
 
 ### Restore Flow
 
-1. External service calls Wings API with backup UUID
+1. External service calls Wings API with backup UUID and target server UUID
 2. Wings finds the snapshot by querying: `restic snapshots --json --tag backup_uuid:{uuid}`
-3. Wings executes: `restic restore {snapshot_id} --target /`
-4. Files are restored to their original locations
-5. Wings notifies the Panel of restore completion
+3. Wings extracts the original server's path from the snapshot metadata
+4. Wings executes: `restic dump --archive tar {snapshot_id} {original_path} | tar -xf - -C {target_server_path}`
+5. Files are extracted from the original server's directory and placed in the target server's directory
+6. Wings notifies the Panel of restore completion
+
+**Note:** This approach supports cross-server restore - the backup from server A can be restored to server B.
 
 ### Delete Flow
 
