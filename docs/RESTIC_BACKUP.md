@@ -321,11 +321,11 @@ The restic adapter implements strict isolation between servers/customers:
 1. External service calls Wings API with backup UUID and target server UUID
 2. Wings finds the snapshot by querying: `restic snapshots --json --tag backup_uuid:{uuid}`
 3. Wings extracts the original server's path from the snapshot metadata
-4. Wings executes: `restic dump --archive tar {snapshot_id} {original_path} | tar -xf - -C {target_server_path}`
-5. Files are extracted from the original server's directory and placed in the target server's directory
+4. Wings executes: `restic restore {snapshot_id}:{original_path} --target {target_server_path}`
+5. Files are restored directly from the original server's directory into the target server's directory
 6. Wings notifies the Panel of restore completion
 
-**Note:** This approach supports cross-server restore - the backup from server A can be restored to server B.
+**Note:** This approach supports cross-server restore - the backup from server A can be restored to server B. The `snapshotID:path` syntax ensures files are placed directly in the target directory without nested paths.
 
 ### Delete Flow
 

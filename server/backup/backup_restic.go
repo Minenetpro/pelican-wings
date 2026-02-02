@@ -161,8 +161,8 @@ func (r *ResticBackup) Generate(ctx context.Context, _ *filesystem.Filesystem, i
 }
 
 // Restore restores a backup from the restic repository to the server's data directory.
-// This supports cross-server restore by extracting files from the original server's
-// path and placing them in the target server's directory.
+// This supports cross-server restore by using the snapshotID:path syntax to restore
+// files from the original server's path directly into the target server's directory.
 func (r *ResticBackup) Restore(ctx context.Context, _ io.Reader, callback RestoreCallback) error {
 	cfg := config.Get().System.Backups.Restic
 
@@ -190,57 +190,29 @@ func (r *ResticBackup) Restore(ctx context.Context, _ io.Reader, callback Restor
 		WithField("target", targetPath).
 		Info("restoring restic backup")
 
-	// Use restic dump to extract files as tar and pipe to tar for extraction.
-	// This allows restoring from one server to another by extracting the original
-	// server's files into the target server's directory.
-	dumpArgs := []string{"dump", "--archive", "tar", snapshot.ID, sourcePath}
+	// Use snapshotID:path syntax to restore contents directly to target.
+	// This allows cross-server restore without nested directories.
+	// See: https://restic.readthedocs.io/en/latest/050_restore.html
+	snapshotWithPath := fmt.Sprintf("%s:%s", snapshot.ID, sourcePath)
+
+	args := []string{
+		"restore",
+		snapshotWithPath,
+		"--target", targetPath,
+	}
+
 	if cfg.CacheDir != "" {
-		dumpArgs = append(dumpArgs, "--cache-dir", cfg.CacheDir)
+		args = append(args, "--cache-dir", cfg.CacheDir)
 	}
 
-	// Create the restic dump command
-	resticCmd := exec.CommandContext(ctx, cfg.BinaryPath, dumpArgs...)
-	resticCmd.Env = r.buildEnv()
-
-	// Create the tar extraction command
-	tarCmd := exec.CommandContext(ctx, "tar", "-xf", "-", "-C", targetPath)
-
-	// Pipe restic dump output to tar stdin
-	var resticStderr, tarStderr bytes.Buffer
-	resticCmd.Stderr = &resticStderr
-
-	pipe, err := resticCmd.StdoutPipe()
+	output, err := r.runRestic(ctx, args...)
 	if err != nil {
-		return errors.Wrap(err, "backup: failed to create pipe for restore")
-	}
-	tarCmd.Stdin = pipe
-	tarCmd.Stderr = &tarStderr
-
-	r.log().Debug("starting restic dump and tar extraction")
-
-	// Start both commands
-	if err := resticCmd.Start(); err != nil {
-		return errors.Wrap(err, "backup: failed to start restic dump")
-	}
-	if err := tarCmd.Start(); err != nil {
-		resticCmd.Process.Kill()
-		return errors.Wrap(err, "backup: failed to start tar extraction")
+		return errors.Wrap(err, "backup: failed to restore restic backup")
 	}
 
-	// Wait for both commands to complete
-	resticErr := resticCmd.Wait()
-	tarErr := tarCmd.Wait()
-
-	if resticErr != nil {
-		r.log().WithField("stderr", resticStderr.String()).Error("restic dump failed")
-		return errors.Wrap(resticErr, "backup: restic dump failed: "+resticStderr.String())
-	}
-	if tarErr != nil {
-		r.log().WithField("stderr", tarStderr.String()).Error("tar extraction failed")
-		return errors.Wrap(tarErr, "backup: tar extraction failed: "+tarStderr.String())
-	}
-
+	r.log().WithField("output", string(output)).Debug("restic restore output")
 	r.log().Info("successfully restored restic backup")
+
 	return nil
 }
 
