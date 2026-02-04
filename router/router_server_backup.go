@@ -207,7 +207,7 @@ func postServerRestoreBackup(c *gin.Context) {
 
 // getServerBackupSnapshots lists all restic snapshots for a server.
 func getServerBackupSnapshots(c *gin.Context) {
-	s := middleware.ExtractServer(c)
+	serverID := c.Param("server")
 	client := middleware.ExtractApiClient(c)
 
 	if !config.Get().System.Backups.Restic.Enabled {
@@ -220,9 +220,9 @@ func getServerBackupSnapshots(c *gin.Context) {
 	// Check if client wants size information (default: false for performance)
 	includeStats := c.Query("include_stats") == "true"
 
-	b := backup.NewRestic(client, "", s.ID(), "")
+	b := backup.NewRestic(client, "", serverID, "")
 	b.WithLogContext(map[string]interface{}{
-		"server":     s.ID(),
+		"server":     serverID,
 		"request_id": c.GetString("request_id"),
 	})
 
@@ -239,7 +239,7 @@ func getServerBackupSnapshots(c *gin.Context) {
 
 // getServerBackupStatus checks if a specific backup snapshot exists in the restic repository.
 func getServerBackupStatus(c *gin.Context) {
-	s := middleware.ExtractServer(c)
+	serverID := c.Param("server")
 	client := middleware.ExtractApiClient(c)
 
 	if !config.Get().System.Backups.Restic.Enabled {
@@ -249,9 +249,9 @@ func getServerBackupStatus(c *gin.Context) {
 		return
 	}
 
-	b := backup.NewRestic(client, c.Param("backup"), s.ID(), "")
+	b := backup.NewRestic(client, c.Param("backup"), serverID, "")
 	b.WithLogContext(map[string]interface{}{
-		"server":     s.ID(),
+		"server":     serverID,
 		"request_id": c.GetString("request_id"),
 	})
 
@@ -272,7 +272,7 @@ func getServerBackupStatus(c *gin.Context) {
 // endpoint can make its own decisions as to how it wants to handle that response.
 // For restic backups, this removes the snapshot from the restic repository.
 func deleteServerBackup(c *gin.Context) {
-	s := middleware.ExtractServer(c)
+	serverID := c.Param("server")
 	client := middleware.ExtractApiClient(c)
 
 	// Parse optional request body to determine adapter type
@@ -296,9 +296,9 @@ func deleteServerBackup(c *gin.Context) {
 			})
 			return
 		}
-		b := backup.NewRestic(client, c.Param("backup"), s.ID(), "")
+		b := backup.NewRestic(client, c.Param("backup"), serverID, "")
 		b.WithLogContext(map[string]interface{}{
-			"server":     s.ID(),
+			"server":     serverID,
 			"request_id": c.GetString("request_id"),
 		})
 		if err := b.Remove(); err != nil {
@@ -310,7 +310,15 @@ func deleteServerBackup(c *gin.Context) {
 	}
 
 	// Handle local backup deletion (default behavior)
-	b, _, err := backup.LocateLocal(client, c.Param("backup"), s.ID())
+	manager := middleware.ExtractManager(c)
+	if _, ok := manager.Get(serverID); !ok {
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
+			"error": "The requested resource does not exist on this instance.",
+		})
+		return
+	}
+
+	b, _, err := backup.LocateLocal(client, c.Param("backup"), serverID)
 	if err != nil {
 		// Just return from the function at this point if the backup was not located.
 		if errors.Is(err, os.ErrNotExist) {

@@ -69,58 +69,65 @@ func Configure(m *wserver.Manager, client remote.Client) *gin.Engine {
 	protected.POST("/api/deauthorize-user", postDeauthorizeUser)
 	protected.GET("/api/events", getServerEvents)
 
-	// These are server specific routes, and require that the request be authorized, and
-	// that the server exist on the Daemon.
+	// These are server specific routes, and require that the request be authorized.
 	server := router.Group("/api/servers/:server")
-	server.Use(middleware.RequireAuthorization(), middleware.ServerExists())
+	server.Use(middleware.RequireAuthorization())
 	{
-		server.GET("", getServer)
-		server.DELETE("", deleteServer)
-
-		server.GET("/logs", getServerLogs)
-		server.GET("/console", getServerConsole)
-		server.GET("/install-logs", getServerInstallLogs)
-		server.POST("/power", postServerPower)
-		server.POST("/commands", postServerCommands)
-		server.POST("/install", postServerInstall)
-		server.POST("/reinstall", postServerReinstall)
-		server.POST("/sync", postServerSync)
-		server.POST("/ws/deny", postServerDenyWSTokens)
-
-		// This archive request causes the archive to start being created
-		// this should only be triggered by the panel.
-		server.POST("/transfer", postServerTransfer)
-		server.DELETE("/transfer", deleteServerTransfer)
-
-		// Deletes all backups for a server
-		server.DELETE("deleteAllBackups", deleteAllServerBackups)
-
-		files := server.Group("/files")
-		{
-			files.GET("/contents", getServerFileContents)
-			files.GET("/list-directory", getServerListDirectory)
-			files.PUT("/rename", putServerRenameFiles)
-			files.POST("/copy", postServerCopyFile)
-			files.POST("/write", postServerWriteFile)
-			files.POST("/create-directory", postServerCreateDirectory)
-			files.POST("/delete", postServerDeleteFiles)
-			files.POST("/compress", postServerCompressFiles)
-			files.POST("/decompress", postServerDecompressFiles)
-			files.POST("/chmod", postServerChmodFile)
-			files.GET("/search", getFilesBySearch)
-
-			files.GET("/pull", middleware.RemoteDownloadEnabled(), getServerPullingFiles)
-			files.POST("/pull", middleware.RemoteDownloadEnabled(), postServerPullRemoteFile)
-			files.DELETE("/pull/:download", middleware.RemoteDownloadEnabled(), deleteServerPullRemoteFile)
-		}
-
 		backup := server.Group("/backup")
 		{
-			backup.POST("", postServerBackup)
 			backup.GET("/snapshots", getServerBackupSnapshots)
-			backup.POST("/:backup/restore", postServerRestoreBackup)
 			backup.GET("/:backup/status", getServerBackupStatus)
 			backup.DELETE("/:backup", deleteServerBackup)
+		}
+
+		serverExisting := server.Group("")
+		serverExisting.Use(middleware.ServerExists())
+		{
+			serverExisting.GET("", getServer)
+			serverExisting.DELETE("", deleteServer)
+
+			serverExisting.GET("/logs", getServerLogs)
+			serverExisting.GET("/console", getServerConsole)
+			serverExisting.GET("/install-logs", getServerInstallLogs)
+			serverExisting.POST("/power", postServerPower)
+			serverExisting.POST("/commands", postServerCommands)
+			serverExisting.POST("/install", postServerInstall)
+			serverExisting.POST("/reinstall", postServerReinstall)
+			serverExisting.POST("/sync", postServerSync)
+			serverExisting.POST("/ws/deny", postServerDenyWSTokens)
+
+			// This archive request causes the archive to start being created
+			// this should only be triggered by the panel.
+			serverExisting.POST("/transfer", postServerTransfer)
+			serverExisting.DELETE("/transfer", deleteServerTransfer)
+
+			// Deletes all backups for a server
+			serverExisting.DELETE("deleteAllBackups", deleteAllServerBackups)
+
+			files := serverExisting.Group("/files")
+			{
+				files.GET("/contents", getServerFileContents)
+				files.GET("/list-directory", getServerListDirectory)
+				files.PUT("/rename", putServerRenameFiles)
+				files.POST("/copy", postServerCopyFile)
+				files.POST("/write", postServerWriteFile)
+				files.POST("/create-directory", postServerCreateDirectory)
+				files.POST("/delete", postServerDeleteFiles)
+				files.POST("/compress", postServerCompressFiles)
+				files.POST("/decompress", postServerDecompressFiles)
+				files.POST("/chmod", postServerChmodFile)
+				files.GET("/search", getFilesBySearch)
+
+				files.GET("/pull", middleware.RemoteDownloadEnabled(), getServerPullingFiles)
+				files.POST("/pull", middleware.RemoteDownloadEnabled(), postServerPullRemoteFile)
+				files.DELETE("/pull/:download", middleware.RemoteDownloadEnabled(), deleteServerPullRemoteFile)
+			}
+
+			backupExisting := serverExisting.Group("/backup")
+			{
+				backupExisting.POST("", postServerBackup)
+				backupExisting.POST("/:backup/restore", postServerRestoreBackup)
+			}
 		}
 	}
 

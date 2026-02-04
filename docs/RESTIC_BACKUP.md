@@ -138,7 +138,8 @@ Content-Type: application/json
 
 ### Delete Backup
 
-Removes a snapshot from the restic repository.
+Removes a snapshot from the restic repository. The server UUID in the URL is
+not validated for restic snapshots; the backup UUID tag identifies the snapshot.
 
 ```http
 DELETE /api/servers/{server}/backup/{backup}
@@ -156,7 +157,8 @@ This runs `restic forget --tag backup_uuid:{backup} --prune` to remove the snaps
 
 ### List Snapshots
 
-Lists all restic snapshots for a server.
+Lists all restic snapshots for a server. The server UUID is used only as a tag
+filter and does not need to exist on the node.
 
 ```http
 GET /api/servers/{server}/backup/snapshots
@@ -205,7 +207,8 @@ Authorization: Bearer {token}
 
 ### Get Snapshot Status
 
-Checks if a specific backup snapshot exists in the restic repository. Always includes size information.
+Checks if a specific backup snapshot exists in the restic repository. Always includes size information. The
+server UUID in the URL is not validated for restic snapshots; the backup UUID tag identifies the snapshot.
 
 ```http
 GET /api/servers/{server}/backup/{backup}/status
@@ -305,7 +308,7 @@ The restic adapter implements strict isolation between servers/customers:
 
 4. **Strict Filtering**: All operations (restore, delete, status check) filter by `backup_uuid` tag, preventing access to other snapshots
 
-5. **Server-Scoped Listing**: The snapshot listing endpoint only returns snapshots for the specified server (filtered by `server_uuid` tag)
+5. **Server-Scoped Listing**: The snapshot listing endpoint only returns snapshots for the specified server (filtered by `server_uuid` tag), even if the server no longer exists on the node
 
 ## How It Works
 
